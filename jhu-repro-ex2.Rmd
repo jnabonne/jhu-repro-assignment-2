@@ -1,0 +1,258 @@
+---
+title: "Analysis of Severe Weather Events Impacts"
+author: "jnabonne"
+date: "7/17/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=F, message=F)
+```
+
+---
+
+## About
+This document computes the answer to the [assignment #2 of Reproducible Research course](https://www.coursera.org/learn/reproducible-research/peer/OMZ37/course-project-2).
+
+### Dataset and corresponding Documentation
+The dataset for this exercice available 
+[here](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2).
+
+There is also two documents to better understand its content:
+
+* [NWS Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+* [additional FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+
+### Synopsis of the Analysis
+
+The main objective of this analysis is to understand the possible impacts 
+(economic and public health) of server weather events.  
+Two main questions were asked : 
+
+1. which types of events are most harmful to population health?
+2. which types of events have the greatest economic consequences?
+
+This analysis starts by downloading a dataset from the U.S. National Oceanic 
+and Atmospheric Administration's (NOAA) storm database containing 
+characteristics of major storms and weather events in the US 
+(time, location, impacts estimation).
+
+The data are then cleaned to only conserve interesting measures and in adequate 
+format for manipulation and display.
+
+Some new tables presenting aggregated results are the created giving for each 
+type of events their number of occurences, victims and damages amount.
+
+The Analysis ends by displaying some graphics showing evidence that tornados 
+and flood are respectively the worst events in term of human victims 
+and economical damages.
+
+
+---
+
+## Data Processing
+
+First we load the libraries used for this analysis
+```{r loading_libs, message=F, warning=FALSE}
+    library(ggplot2)
+    library(dplyr)
+```
+
+Then we download the dataset from the internet.  
+No check on the already existing presence of the file is done, this to ensure 
+that we always work on the latest available version of the dataset.
+
+```{r data_downloading, cache=TRUE}
+	# DOWNLOADING DATASET (EACH TIME TO GET ITS LATEST VERSION)
+	file_url  <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+	file_path <- "StormData.csv.bz2"
+	download.file(file_url, destfile=file_path, method="curl")
+```
+
+The dataset is then loaded
+```{r data_loading, cache=TRUE}
+	# Reading (and unzipping on-the-fly) the DATASET
+	sdata <- read.csv("StormData.csv.bz2")
+#	sdata <- read.csv("StormData.csv.bz2", nrows=30000) # only to speed tests ;)
+```
+
+Then some processing are done to the dataset to ease the rest of the analysis.  
+
+First we change the exponent factors to be applied to property and crop damages 
+by correct numeric values. Following some reading on the internet 
+(especially [this post](https://rstudio-pubs-static.s3.amazonaws.com/58957_37b6723ee52b455990e149edde45e5b6.html))
+the following matching as been performed
+
+|   symbol   | exponent value |
+|:----------:|---------------:|
+| numeric    |             10 |
+| h or H     |            100 |
+| t or T     |           1000 |
+| k or K     |           1000 |
+| m or M     |      1.000.000 |
+| b or B     |  1.000.000.000 |
+| +          |              1 |
+| all others |              0 |
+
+These exponent values are then used to redress property and crop damages.
+
+```{r desactivated_code, warning=F, message=F, echo=F}
+# DESACTIVATED CODE to manage exponential facors (if you have any idea why...)
+#   prop_exp <- data.frame(exp=unique(sdata$PROPDMGEXP))
+#   crop_exp <- data.frame(exp=unique(sdata$CROPDMGEXP))
+#   eval_exp <- data.frame(exp=unique(rbind(prop_exp, crop_exp)))
+#   eval_exp <- mutate(eval_exp, value=ifelse(exp %in% c('h','H'), 100,
+#                                      ifelse(exp %in% c('t','T','k','K'), 1000,
+#                                      ifelse(exp %in% c('m','M'), 1000000,
+#                                      ifelse(exp %in% c('b','B'), 1000000000,
+#                                      ifelse(exp %in% 0:9, 10,
+#                                      ifelse(exp == '+', 1, 0)))))))
+#   sdata <- mutate(sdata, 
+#                   PROPDMG= PROPDMG * prop_exp$value[prop_exp$exp==PROPDMGEXP],
+#                   CROPDMG= CROPDMG * crop_exp$value[crop_exp$exp==CROPDMGEXP])
+```
+
+```{r data_cleaning_1, cache=TRUE}
+    # Mathcing exponantial factors with correct numeric values
+    sdata <- mutate(sdata, CROPDMGEXP=ifelse(CROPDMGEXP %in% c('h','H'), 100,
+                            ifelse(CROPDMGEXP %in% c('t','T','k','K'), 1000,
+                            ifelse(CROPDMGEXP %in% c('m','M'), 1000000,
+                            ifelse(CROPDMGEXP %in% c('b','B'), 1000000000,
+                            ifelse(CROPDMGEXP %in% 0:9, 10,
+                            ifelse(CROPDMGEXP == '+', 1, 0)))))))
+    sdata <- mutate(sdata, PROPDMGEXP=ifelse(PROPDMGEXP %in% c('h','H'), 100,
+                            ifelse(PROPDMGEXP %in% c('t','T','k','K'), 1000,
+                            ifelse(PROPDMGEXP %in% c('m','M'), 1000000,
+                            ifelse(PROPDMGEXP %in% c('b','B'), 1000000000,
+                            ifelse(PROPDMGEXP %in% 0:9, 10,
+                            ifelse(PROPDMGEXP == '+', 1, 0)))))))
+    # Computing final damages amount from corresponding exponential factors
+    sdata <- mutate(sdata,PROPDMG=PROPDMG*PROPDMGEXP,CROPDMG=CROPDMG*CROPDMGEXP)
+```
+
+The dataset is the cleaned by removing unusefull columns.  
+The dates, even if not very used in this analyis (kept to allow playing with 
+the data set in eda mode) are casted correctly to be more easily manageable.
+
+```{r data_cleaning_2}
+    # Keeping only interresting data
+    sdata <- subset(sdata, select=c("EVTYPE",   "BGN_DATE", "FATALITIES", 
+                                    "INJURIES", "PROPDMG",  "CROPDMG"))
+
+    # Casting dates correctly (date is here optional and was kept for tests)
+    sdata$BGN_DATE <- as.Date(sdata$BGN_DATE, "%m/%d/%Y %H:%M:%S")
+    #sd1 <- sdata %>% group_by(year(BGN_DATE), EVTYPE) # requires lubridate lib
+```
+
+Finally, the dataset is grouped by event type (using the `dplyr` library) and 
+summarized creating totals for the interesting measures:
+
+* nb of occurences
+* total victims, with subtotal per injuries and fatalities
+* total damages, with subtotal for property and crop damages
+
+To get plots that can easily be read by humans, we only kept the top10 events 
+(in term of occurences, victims and damages) otherwise we would get graphics 
+with hundreds of variables
+
+```{r data_summarizing}
+    # Grouping data by events and summarizing
+    sd2 <- sdata %>% group_by(EVTYPE)
+    sd3 <- summarize(sd2, total_events=length(EVTYPE), 
+                     total_injuries=sum(INJURIES),
+                     total_fatalities=sum(FATALITIES),
+                     total_victims=sum(INJURIES)+sum(FATALITIES),
+                     total_property_damages=sum(PROPDMG),
+                     total_crop_damages=sum(CROPDMG),
+                     total_damages=sum(PROPDMG)+sum(CROPDMG))
+    
+    # Building top10 to get cleaner plots
+    top10_events  <- arrange(sd3, desc(sd3$total_events))[1:10,]
+    top10_victims <- arrange(sd3, desc(sd3$total_victims))[1:10,]
+    top10_damages <- arrange(sd3, desc(sd3$total_damages))[1:10,]
+```
+
+
+---
+
+## Results
+
+From a pure events based approach we can see on the below graphics **the type of
+event that occurs most is `r as.character(top10_events$EVTYPE[1])`.**  
+The graphic below shows the most frequent climatic events in the US between 
+1950 and 2011:
+```{r plotting_events}
+    # ploting nb occurrences / events type
+    g <- ggplot(data=top10_events, 
+            aes(x=reorder(EVTYPE, -total_events), y=total_events, fill=EVTYPE))
+    # printing plot with adequate legends and scaling
+    g + geom_bar(stat="identity") + theme_minimal() +
+    ggtitle("NUMBER OF OCCURENCES PER EVENTS TYPE") + labs(fill="Events") +
+    scale_y_continuous(name="number of occurences", labels = scales::comma) +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank(), 
+                                                axis.ticks.x=element_blank())
+```
+
+This does not represent a list of the most dangerous climatic events. We should 
+take some criteria to investigate more about these catastrophic events...
+
+### Victims based approach
+
+But if we base our analysis on the number of victims the result is quite 
+different; **the worst event in terms of human victims 
+is `r as.character(top10_victims$EVTYPE[1])`.**  
+Note that have been summed here injuries and fatalities (even if deaths could 
+arguably count more) as it is difficult to create a scale between these two.  
+
+The table below displays a top10 of victims per event type:
+```{r tabling_victims}
+    subset(arrange(sd3, desc(sd3$total_victims))[1:10,], select=c("EVTYPE", 
+        "total_events", "total_injuries", "total_fatalities", "total_victims"))
+```
+
+The graphic below shows a top10 of the worst events in terms of victims:
+```{r plotting_victims} 
+    # ploting nb victims / events type
+    g <- ggplot(data=top10_victims, 
+        aes(x=reorder(EVTYPE, -total_victims), y=total_victims, fill=EVTYPE))
+    # printing plot with adequate legends and scaling
+    g + geom_bar(stat="identity") + theme_minimal() +
+    ggtitle("TOTAL NUMBER OF VICTIMS PER EVENTS TYPE") + labs(fill="Events") +
+    scale_y_continuous(name="number of injuries + fatalities", 
+                                                    labels = scales::comma) +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank(),
+                                                axis.ticks.x=element_blank())
+```
+
+### Economic based approach
+Now from an economic point of view, the result is again different 
+with **`r as.character(top10_damages$EVTYPE[1])` arriving first 
+in term of damages amount.**  
+As for victims, both property and crop damages have been added together 
+to get these results.  
+
+The table below displays a top10 of economic damages per event type:
+```{r tabling_damages}
+    subset(arrange(sd3, desc(sd3$total_damages))[1:10,], select=c("EVTYPE", 
+                                    "total_events", "total_property_damages", 
+                                    "total_crop_damages", "total_damages"))
+```
+
+The graphic below shows the 10 worst events in terms of economic damages.
+```{r plotting_damages} 
+    # ploting damages / events type
+    g <- ggplot(data=top10_damages, 
+        aes(x=reorder(EVTYPE, -total_damages), y=total_damages, fill=EVTYPE))
+    # printing plot with adequate legends and scaling
+    g + geom_bar(stat="identity") + theme_minimal() +
+    ggtitle("TOTAL AMOUNT OF DAMAGES PER EVENTS TYPE") + labs(fill="Events") +
+    scale_y_continuous(name="amount of damages (property + crop) in USD", 
+                                                    labels = scales::comma) +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank(), 
+                                                axis.ticks.x=element_blank())
+```
+
+---
+
+This is the end, thanks for reading until it!
